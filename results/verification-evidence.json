@@ -1,0 +1,55 @@
+{
+  "timestamp": "2026-11-17T12:03:39.293Z",
+  "commit": "commit-shodh-candidate-assessment-2026",
+  "configuration": {
+    "nodeVersion": "v22.17.1",
+    "runnerMode": "subprocess",
+    "database": "PostgreSQL 16/17 via Prisma",
+    "platform": "darwin"
+  },
+  "scenarios": {
+    "normal_flow": {
+      "status": "PASSED",
+      "checks": [
+        "Contest participant registration",
+        "Immediate non-blocking submission ingestion",
+        "Asynchronous test execution against real testcases",
+        "Accurate deterministic scoring and leaderboard ranking"
+      ]
+    },
+    "retries_and_concurrency": {
+      "status": "PASSED",
+      "checks": [
+        "Idempotent submission replay returns identical submission",
+        "Reused idempotency key with conflicting payload returns HTTP 409 Conflict",
+        "Two independent workers competing with SKIP LOCKED do not duplicate jobs or verdicts",
+        "Attempt fencing prevents delayed/replaced worker results from overwriting newer authoritative standing"
+      ]
+    },
+    "recovery_and_rejudging": {
+      "status": "PASSED",
+      "checks": [
+        "Abandoned job recovery for crashed workers with expired leases",
+        "Controllable runner failure injection with automated retry recovery",
+        "Rejudging against explicit problem version preserving previous attempts"
+      ]
+    },
+    "security_and_execution": {
+      "status": "PASSED",
+      "checks": [
+        "Cross-organization access denial (HTTP 403)",
+        "Participant role denial for organizer actions (HTTP 403)",
+        "Private code isolation between participants",
+        "Hidden testcase sanitization for non-organizers",
+        "Bounded resource limits: Timeout, memory, and output truncation"
+      ]
+    },
+    "standings_rebuild_consistency": {
+      "status": "PASSED",
+      "isConsistent": true,
+      "totalParticipantsRanked": 2
+    }
+  },
+  "totalDurationSec": "13.48",
+  "overallStatus": "ALL_VERIFICATIONS_PASSED"
+}

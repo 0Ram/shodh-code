@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: shodh-db
+    restart: always
+    environment:
+      POSTGRES_USER: shodh
+      POSTGRES_PASSWORD: shodh_password
+      POSTGRES_DB: shodh_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shodh -d shodh_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shodh-api
+    restart: on-failure
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      DATABASE_URL: postgresql://shodh:shodh_password@db:5432/shodh_db?schema=public
+      JWT_SECRET: shodh-super-secure-production-jwt-secret-key-2026
+      JWT_EXPIRATION: 86400s
+      RUNNER_MODE: subprocess
+      RUNNER_DOCKER_IMAGE: shodh-runner:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "npx prisma migrate deploy &&
+             npm run prisma:seed &&
+             node dist/src/main"
+
+  worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shodh-worker-1
+    restart: always
+    environment:
+      NODE_ENV: production
+      WORKER_NAME: worker-1
+      DATABASE_URL: postgresql://shodh:shodh_password@db:5432/shodh_db?schema=public
+      RUNNER_MODE: subprocess
+      RUNNER_DOCKER_IMAGE: shodh-runner:latest
+      WORKER_POLL_INTERVAL_MS: 300
+      WORKER_LEASE_DURATION_SEC: 15
+      WORKER_MAX_RETRIES: 3
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      api:
+        condition: service_started
+      db:
+        condition: service_healthy
+    command: ["node", "dist/src/worker.main"]
+
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shodh-worker-2
+    restart: always
+    environment:
+      NODE_ENV: production
+      WORKER_NAME: worker-2
+      DATABASE_URL: postgresql://shodh:shodh_password@db:5432/shodh_db?schema=public
+      RUNNER_MODE: subprocess
+      RUNNER_DOCKER_IMAGE: shodh-runner:latest
+      WORKER_POLL_INTERVAL_MS: 300
+      WORKER_LEASE_DURATION_SEC: 15
+      WORKER_MAX_RETRIES: 3
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      api:
+        condition: service_started
+      db:
+        condition: service_healthy
+    command: ["node", "dist/src/worker.main"]
+
+volumes:
+  pgdata:

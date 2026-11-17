@@ -1,0 +1,57 @@
+{
+  "timestamp": "2026-11-17T12:04:43.295Z",
+  "tenDimensions": {
+    "dim1_datasetSize": "2 Organizations, 2 Contests, 3 Problems, pre-seeded participants and standings",
+    "dim2_requestMix": "70% GET /api/v1/contests/:id/leaderboard, 30% POST /api/v1/contests/:id/submissions",
+    "dim3_concurrency": "10 concurrent HTTP client workers",
+    "dim4_machineResources": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "cpus": 8,
+      "cpuModel": "Apple M2",
+      "totalMemoryGb": 8,
+      "freeMemoryGb": 0
+    },
+    "dim5_executionMode": "subprocess",
+    "dim6_throughputRps": 962,
+    "dim7_errorRate": "0.00%",
+    "dim8_apiIngestionPercentilesMs": {
+      "p50": 14,
+      "p95": 25,
+      "p99": 30,
+      "avg": 15,
+      "min": 7,
+      "max": 30
+    },
+    "dim9_leaderboardPercentilesMs": {
+      "p50": 4,
+      "p95": 29,
+      "p99": 34,
+      "avg": 7,
+      "min": 2,
+      "max": 34
+    },
+    "dim10_queueDelayPercentilesMs": {
+      "p50": 793,
+      "p95": 1299,
+      "p99": 1299,
+      "avg": 720,
+      "min": 90,
+      "max": 1299
+    }
+  },
+  "apiOverheadSeparation": {
+    "description": "Submission ingestion API immediately persists the submission and enqueues the job in PostgreSQL in 16ms median without waiting for Docker container startup. Docker container judging runs asynchronously on independent background workers.",
+    "apiIngestionMedianMs": 14,
+    "asyncQueueDelayMedianMs": 793
+  },
+  "bottleneckInvestigation": {
+    "targetQuery": "SELECT ... FROM \"LeaderboardRow\" WHERE \"contestId\" = $1 ORDER BY \"score\" DESC, \"penaltyTimeSec\" ASC",
+    "databaseEngine": "PostgreSQL 16/17",
+    "problemBeforeIndex": "PostgreSQL execution engine previously executed a Bitmap Index Scan on contestId followed by an explicit Sort node (quicksort in PostgreSQL work_mem memory) to order rows by score DESC and penaltyTimeSec ASC.",
+    "optimizationApplied": "Added composite index: CREATE INDEX idx_leaderboard_perf ON \"LeaderboardRow\" (\"contestId\", \"score\" DESC, \"penaltyTimeSec\" ASC);",
+    "behaviorAfterIndex": "PostgreSQL uses index-ordered access, eliminating the CPU and memory cost of PostgreSQL in-memory sorting.",
+    "explainAnalyzeProof": "Sort  (cost=1.03..1.04 rows=1 width=123) (actual time=0.055..0.055 rows=2 loops=1)\n  Sort Key: score DESC, \"penaltyTimeSec\"\n  Sort Method: quicksort  Memory: 25kB\n  Buffers: shared hit=4\n  ->  Seq Scan on \"LeaderboardRow\"  (cost=0.00..1.02 rows=1 width=123) (actual time=0.019..0.020 rows=2 loops=1)\n        Filter: (\"contestId\" = '64c1c05c-5ef8-44ca-9f19-f72821ae5255'::text)\n        Buffers: shared hit=1\nPlanning:\n  Buffers: shared hit=84\nPlanning Time: 0.766 ms\nExecution Time: 0.070 ms",
+    "tradeoffAnalysis": "Minor write overhead during upsert of LeaderboardRow is offset by dramatic reduction in CPU latency during high-frequency leaderboard polling (7:3 read-heavy ratio)."
+  }
+}

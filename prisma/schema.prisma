@@ -1,0 +1,351 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum GlobalRole {
+  SUPERADMIN
+  USER
+}
+
+enum OrgRole {
+  ORGANIZER
+  PARTICIPANT
+}
+
+enum ContestStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+}
+
+enum JobStatus {
+  QUEUED
+  LEASED
+  COMPLETED
+  FAILED
+  RETRYABLE
+}
+
+enum SubmissionStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum Verdict {
+  PENDING
+  ACCEPTED
+  WRONG_ANSWER
+  TIME_LIMIT_EXCEEDED
+  MEMORY_LIMIT_EXCEEDED
+  RUNTIME_ERROR
+  COMPILATION_ERROR
+  OUTPUT_LIMIT_EXCEEDED
+  JUDGE_FAILURE
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+model User {
+  id           String             @id @default(uuid())
+  email        String             @unique
+  name         String
+  passwordHash String
+  globalRole   GlobalRole         @default(USER)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  memberships  OrganizationMember[]
+  participations ContestParticipant[]
+  submissions  Submission[]
+
+  @@index([email])
+}
+
+model Organization {
+  id          String               @id @default(uuid())
+  name        String
+  slug        String               @unique
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  members     OrganizationMember[]
+  contests    Contest[]
+  problems    Problem[]
+
+  @@index([slug])
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String
+  role           OrgRole      @default(PARTICIPANT)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId, organizationId])
+}
+
+model Contest {
+  id                         String               @id @default(uuid())
+  organizationId             String
+  title                      String
+  slug                       String               @unique
+  description                String?
+  startTime                  DateTime
+  endTime                    DateTime
+  status                     ContestStatus        @default(UPCOMING)
+  scoringRule                String               @default("ICPC") // "ICPC" or "PARTIAL"
+  penaltyPerFailedAttemptSec Int                  @default(1200) // 20 minutes default ICPC penalty
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+
+  organization               Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  participants               ContestParticipant[]
+  submissions                Submission[]
+  problems                   ContestProblem[]
+  leaderboardRows            LeaderboardRow[]
+
+  @@index([organizationId, status])
+  @@index([startTime, endTime])
+}
+
+model ContestParticipant {
+  id           String    @id @default(uuid())
+  contestId    String
+  userId       String
+  registeredAt DateTime  @default(now())
+
+  contest      Contest   @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([contestId, userId])
+  @@index([contestId])
+}
+
+model Problem {
+  id               String           @id @default(uuid())
+  organizationId   String
+  code             String           // e.g. "PROB-A"
+  title            String
+  description      String
+  currentVersionId String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  versions         ProblemVersion[]
+  contests         ContestProblem[]
+  submissions      Submission[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+}
+
+model ContestProblem {
+  id        String   @id @default(uuid())
+  contestId String
+  problemId String
+  alias     String   // e.g. "A", "B", "C"
+  points    Int      @default(100)
+  createdAt DateTime @default(now())
+
+  contest   Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem   Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@unique([contestId, problemId])
+  @@unique([contestId, alias])
+}
+
+model ProblemVersion {
+  id                String             @id @default(uuid())
+  problemId         String
+  versionNumber     Int
+  timeLimitMs       Int                @default(2000)
+  memoryLimitMb     Int                @default(128)
+  allowedLanguages  String[]           @default(["python3"])
+  statement         String
+  createdAt         DateTime           @default(now())
+
+  problem           Problem            @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  testSuiteVersions TestSuiteVersion[]
+  submissions       Submission[]
+
+  @@unique([problemId, versionNumber])
+  @@index([problemId])
+}
+
+model TestSuiteVersion {
+  id               String         @id @default(uuid())
+  problemVersionId String
+  versionNumber    Int
+  isAuthoritative  Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+
+  problemVersion   ProblemVersion @relation(fields: [problemVersionId], references: [id], onDelete: Cascade)
+  testCases        TestCase[]
+  submissions      Submission[]
+
+  @@unique([problemVersionId, versionNumber])
+  @@index([problemVersionId])
+}
+
+model TestCase {
+  id                 String           @id @default(uuid())
+  testSuiteVersionId String
+  input              String
+  expectedOutput     String
+  isSample           Boolean          @default(false)
+  timeLimitMs        Int?
+  memoryLimitMb      Int?
+  weight             Int              @default(10)
+  orderIndex         Int              @default(0)
+  createdAt          DateTime         @default(now())
+
+  testSuiteVersion   TestSuiteVersion @relation(fields: [testSuiteVersionId], references: [id], onDelete: Cascade)
+
+  @@index([testSuiteVersionId, orderIndex])
+}
+
+model Submission {
+  id                     String             @id @default(uuid())
+  contestId              String
+  problemId              String
+  problemVersionId       String
+  testSuiteVersionId     String
+  userId                 String
+  language               String             @default("python3")
+  sourceCode             String
+  status                 SubmissionStatus   @default(QUEUED)
+  verdict                Verdict            @default(PENDING)
+  score                  Int                @default(0)
+  maxExecutionTimeMs     Int                @default(0)
+  maxMemoryUsageMb       Int                @default(0)
+  authoritativeAttemptId String?
+  submittedAt            DateTime           @default(now())
+  completedAt            DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  contest                Contest            @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem                Problem            @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  problemVersion         ProblemVersion     @relation(fields: [problemVersionId], references: [id], onDelete: Cascade)
+  testSuiteVersion       TestSuiteVersion   @relation(fields: [testSuiteVersionId], references: [id], onDelete: Cascade)
+  user                   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  attempts               SubmissionAttempt[]
+  judgeJobs              JudgeJob[]
+
+  @@index([contestId, userId])
+  @@index([contestId, problemId, verdict])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model IdempotencyRecord {
+  id             String   @id @default(uuid())
+  idempotencyKey String
+  actorId        String
+  contestId      String
+  requestHash    String
+  submissionId   String
+  createdAt      DateTime @default(now())
+
+  @@unique([idempotencyKey, actorId, contestId])
+  @@index([submissionId])
+}
+
+model SubmissionAttempt {
+  id               String            @id @default(uuid())
+  submissionId     String
+  attemptNumber    Int
+  fencingToken     BigInt            // Monotonically increasing token to reject stale attempts
+  workerId         String?
+  status           SubmissionStatus  @default(QUEUED)
+  verdict          Verdict           @default(PENDING)
+  score            Int               @default(0)
+  executionTimeMs  Int               @default(0)
+  memoryUsageMb    Int               @default(0)
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  isAuthoritative  Boolean           @default(false)
+  isRejudge        Boolean           @default(false)
+  problemVersionId String?
+  testSuiteVersionId String?
+  errorDetails     String?
+  createdAt        DateTime          @default(now())
+
+  submission       Submission        @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  judgeJobs        JudgeJob[]
+
+  @@unique([submissionId, attemptNumber])
+  @@index([submissionId, isAuthoritative])
+  @@index([fencingToken])
+}
+
+model JudgeJob {
+  id              String            @id @default(uuid())
+  submissionId    String
+  attemptId       String
+  status          JobStatus         @default(QUEUED)
+  priority        Int               @default(0)
+  claimedBy       String?
+  leaseExpiresAt  DateTime?
+  retryCount      Int               @default(0)
+  maxRetries      Int               @default(3)
+  lastHeartbeatAt DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  submission      Submission        @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  attempt         SubmissionAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@index([status, leaseExpiresAt])
+  @@index([submissionId])
+}
+
+model OutboxEvent {
+  id            String       @id @default(uuid())
+  aggregateType String       // e.g. "SUBMISSION", "REJUDGE"
+  aggregateId   String
+  eventType     String       // e.g. "SUBMISSION_CREATED", "REJUDGE_REQUESTED"
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  createdAt     DateTime     @default(now())
+  processedAt   DateTime?
+
+  @@index([status, createdAt])
+}
+
+model LeaderboardRow {
+  id              String   @id @default(uuid())
+  contestId       String
+  userId          String
+  rank            Int      @default(1)
+  score           Int      @default(0)
+  penaltyTimeSec  Int      @default(0)
+  problemsSolved  Int      @default(0)
+  detailJson      Json     // Per-problem status: { [problemId]: { solved: boolean, attempts: number, timeSec: number, score: number } }
+  lastAcceptedAt  DateTime?
+  updatedAt       DateTime @updatedAt
+
+  contest         Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+
+  @@unique([contestId, userId])
+  @@index([contestId, score(sort: Desc), penaltyTimeSec(sort: Asc)])
+}
